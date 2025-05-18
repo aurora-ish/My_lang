@@ -210,4 +210,5 @@ class Parser:
             self.advance()
             right = func()
             left = bin_op_node(left, op, right)
+        return left
         
