@@ -301,7 +301,19 @@ class Parser:
             if res.error: return res
             left = bin_op_node(left, op, right)
         return res.success(left)
-        
+#########################
+#####VALUES
+#########################
+class number:
+    def __init__(self, value):
+        self.value = value
+        self.set_pos()
+    def set_pos(self, pos_start= None, pos_end= None):
+        self.pos_start= pos_start
+        self.pos_end = pos_end
+        return self
+
+
 
 
 ####################
@@ -316,7 +328,7 @@ class interpreter:
         raise Exception(f"no method for node type: {type(node).__name__}")
     ####################
 
-    def visit_numnode(self, node):
+    def visit_number_node(self, node):
         print("found num node")
     
     def visit_bin_op_node(self, node):
@@ -324,6 +336,7 @@ class interpreter:
         ## WE WERE ONLY VISITING THE ROOT NODE SO number nodes were not visited
         self.visit(node.left)
         self.visit(node.right)
-    def visit_un_op_node(self, node):
+    def visit_unaryoperations(self, node):
         print("found unary operator")
         self.visit(node.node)
+
