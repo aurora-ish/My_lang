@@ -1,4 +1,21 @@
-expr : term((plus|minus)term)*
+expr   : KEYWORD:wish IDENTIFIER EQ expr
+       : comp_expr((KEYWORD: alsoo, or)comp_expr)
+comp_expr: nuhuh comp_expr
+       : arith_expr((EE|LT|GT|LTE|GTE)arith_expr)
+arith_expr: term((plus|minus)term)*
+
+
 term : factor((mul|div)factor)*
-factor : int|float
-will add more here
+
+factor :(plus|minus)factor
+       :power
+
+power: atom(POW factor)*
+
+atom   : int|float|IDENTIFIER
+       : lparen expr rparen
+
+
+expr() → comp_expr() (assignment) → arith_expr() (addition/subtraction) → term()
+
+
