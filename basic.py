@@ -15,10 +15,16 @@ TT_MUL = 'MUL'
 TT_DIV = 'DIV'
 TT_LPAREN = 'LPAREN'
 TT_RPAREN = 'RPAREN'
+TT_EE = 'EE'
+TT_NE = 'NE'
+TT_LT = 'LT'
+TT_GT = 'GT'
+TT_LTE = 'LTE'
+TT_GTE = 'GTE'
 TT_EOF = 'EOF' 
 TT_POW = 'POW'
 KEYWORDS = [
-     'wish'
+     'wish', 'nuhuh', 'alsoo', 'or'
 ]
 
 class token:
@@ -88,6 +94,23 @@ class lexer:
                 tokens.append(self.make_identifier())
             elif self.current_char in DIGITS:
                 tokens.append(self.make_number())
+            elif self.current_char == '!':
+                tok, error= self.make_not_equal()
+                if error:
+                    return [], error
+                tokens.append(tok)
+            elif self.current_char == '=':
+                tok, error= self.make_equal()
+                tokens.append(self.make_equal())
+            elif self.current_char == '<':
+                tok, error= self.make_equal()
+                tokens.append(self.make_less_than())
+            elif self.current_char == '>':
+                tok, error= self.make_equal()
+                tokens.append(self.make_greater_than())
+
+            
+
             else :
                 start = self.pos.copy()
                 char = self.current_char
@@ -120,6 +143,45 @@ class lexer:
             self.advance()
         tok_type = TT_KEYWORD if id_str in KEYWORDS else TT_IDENTIFIER
         return token(tok_type, id_str, pos_start, self.pos)
+    def make_not_equal(self):
+        pos_start = self.pos.copy()
+        self.advance()
+        if self.current_char == '=':
+            self.advance()
+            return token(TT_NE, pos_start, self.pos)
+        else:
+            return None, ExpectedCharError(pos_start, self.pos, "'='after '!'")
+    def make_equal(self):
+        tok_type = TT_EQ
+        pos_start = self.pos.copy()
+        self.advance()
+        if self.current_char == '=':
+            self.advance()
+            return token(TT_EE, pos_start, self.pos)
+        return token(tok_type, pos_start, self.pos)
+    def make_less_than(self):
+        tok_type = TT_LT
+        pos_start = self.pos.copy()
+        self.advance()
+        if self.current_char == '=':
+            self.advance()
+            return token(TT_LTE, pos_start, self.pos)
+        return token(tok_type, pos_start, self.pos)
+    def make_greater_than(self):
+        tok_type = TT_GT
+        pos_start = self.pos.copy()
+        self.advance()
+        if self.current_char == '=':
+            self.advance()
+            return token(TT_GTE, pos_start, self.pos)
+        return token(tok_type, pos_start, self.pos)    
+
+
+        
+
+
+        
+
 
 class position:
     def __init__(self, index, line, column, fn, ftxt):
@@ -151,6 +213,9 @@ class error:
         result += f" File {self.start.fn}, line {self.start.line + 1}"
         result += '\n\n' + string_with_arrows(self.start.ftxt,self.start, self.end )
         return result
+class ExpectedCharError(error):
+    def __init__(self, pos_start, pos_end, details):
+        super().__init__(pos_start, pos_end, "Expected Char", details)
 
 class illegalchar(error):
     def __init__(self,start, end, details):
@@ -326,6 +391,18 @@ class Parser:
 
     def term(self):
         return self.bin_op(self.factor, (TT_MUL, TT_DIV))
+    def comp_expr(self):
+        res = parseresult()
+        if self.current_tok.matches(TT_KEYWORD, "nuhuh"):
+            op_tok= self.current_tok
+            res.register(self.advance())
+            node = res.register(self.comp_expr())
+            if res.error: return res
+            return res.success(unaryoperations(op_tok, node))
+        node = res.register(self.bin_op(self.arith_expr, (TT_EE, TT_NE, TT_LT, TT_GT, TT_LTE, TT_GTE)))
+        if res.error: 
+            return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, "Expected int , float , +,   - , (, 'nuhuh "))
+      
 
     def expr(self):
         res = parseresult()
@@ -343,7 +420,7 @@ class Parser:
             if res.error: return res
             return res.success(varassign(var_name, expr))
         
-        node = res.register(self.bin_op(self.term, (TT_PLUS, TT_MINUS)))
+        node = res.register(self.bin_op(self.comp_expr, ((TT_KEYWORD, "alsoo"), (TT_KEYWORD, "or"))))
         if res.error: 
             return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, "expected var or int or float or identifier + - pr ( or )"))
         return res.success(node)  # FIXED: Return the node with success
@@ -356,7 +433,7 @@ class Parser:
         left = res.register(func_a())
         if res.error: return res
         
-        while self.current_tok is not None and self.current_tok.type in ops:
+        while self.current_tok is not None and self.current_tok.type in ops or (self.current_tok.type, self.current_tok.value)in ops:
             op = self.current_tok
             res.register(self.advance())
             right = res.register(func_b())
