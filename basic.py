@@ -23,8 +23,9 @@ TT_LTE = 'LTE'
 TT_GTE = 'GTE'
 TT_EOF = 'EOF' 
 TT_POW = 'POW'
+
 KEYWORDS = [
-     'wish', 'nuhuh', 'alsoo', 'or'
+     'wish', 'nuhuh', 'alsoo', 'or', 'if', 'then', 'elif', 'else'
 ]
 
 class token:
@@ -114,7 +115,6 @@ class lexer:
         result = ''
         dot = 0
         pos_start = self.pos.copy()
-
 
         while self.current_char is not None and (self.current_char.isdigit() or self.current_char == '.'):
             if self.current_char == '.':
@@ -268,7 +268,6 @@ class number_node:
     def __repr__(self):
         return f"{self.tok}"
 
-
 class bin_op_node:
     def __init__(self, left, op, right):
         self.left = left
@@ -280,7 +279,12 @@ class bin_op_node:
     def __repr__(self):
         return f"({self.left}, {self.op}, {self.right})"
     
-
+class IfNode:
+    def __init__(self, cases, else_case):
+        self.cases = cases
+        self.else_case = else_case
+        self.pos_start = self.cases[0][0].pos_start
+        self.pos_end = (self.else_case.pos_end if self.else_case else self.cases[len(self.cases)-1][0].pos_end)
 
 class unaryoperations:
     def __init__(self, op, node):
@@ -291,10 +295,6 @@ class unaryoperations:
 
     def __repr__(self):
         return f'({self.op}, {self.node})'
-    
-
-
-
 
 class varaccess:
     def __init__(self, var_name_tok):
@@ -309,9 +309,6 @@ class varassign:
         self.pos_start = self.var_name_tok.pos_start
         self.pos_end = self.value.pos_end
 
-
-
-
 ################
 #PARSE RESULT#
 #################
@@ -319,19 +316,23 @@ class parseresult:
     def __init__(self):
         self.error = None
         self.node = None
+        self.advance_count = 0
      
+    def register_advancement(self):
+        self.advance_count += 1
+        
     def register(self, res):
-        if isinstance(res, parseresult):
-            if res.error: self.error = res.error
-            return res.node
-        return res
+        self.advance_count += res.advance_count
+        if res.error: self.error = res.error
+        return res.node
         
     def success(self, node):
         self.node= node
         return self
         
     def failure(self, error):
-        self.error = error
+        if self.advance_count == 0:
+            self.error = error
         return self 
 
 #####
@@ -355,25 +356,106 @@ class Parser:
         if not res.error and self.current_tok.type!= TT_EOF:
             return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end,"unexpected we expected something else -_-"))
         return res
-        
+
+    def if_expr(self):
+        res = parseresult()
+        cases = []
+        else_case = None
+
+        # Check for 'if' keyword (lowercase)
+        if not self.current_tok.matches(TT_KEYWORD, 'if'):
+            return res.failure(invalidsyntax(
+                self.current_tok.pos_start, self.current_tok.pos_end,
+                "Expected 'if'"
+            ))
+
+        res.register_advancement()
+        self.advance()
+
+        # Parse the condition after 'if'
+        condition = res.register(self.expr())
+        if res.error:
+            return res
+
+        # Check for 'then' keyword
+        if not self.current_tok.matches(TT_KEYWORD, 'then'):
+            return res.failure(invalidsyntax(
+                self.current_tok.pos_start, self.current_tok.pos_end,
+                "Expected 'then'"
+            ))
+
+        res.register_advancement()
+        self.advance()
+
+        # Parse the expression after 'then'
+        expr = res.register(self.expr())
+        if res.error:
+            return res
+
+        cases.append((condition, expr))
+
+        # Handle 'elif' clauses
+        while self.current_tok.matches(TT_KEYWORD, 'elif'):
+            res.register_advancement()
+            self.advance()
+
+            condition = res.register(self.expr())
+            if res.error:
+                return res
+
+            if not self.current_tok.matches(TT_KEYWORD, 'then'):
+                return res.failure(invalidsyntax(
+                    self.current_tok.pos_start, self.current_tok.pos_end,
+                    "Expected 'then'"
+                ))
+
+            res.register_advancement()
+            self.advance()
+
+            expr = res.register(self.expr())
+            if res.error:
+                return res
+
+            cases.append((condition, expr))
+
+        # Handle optional 'else' clause
+        if self.current_tok.matches(TT_KEYWORD, 'else'):
+            res.register_advancement()
+            self.advance()
+
+            else_case = res.register(self.expr())
+            if res.error:
+                return res
+
+        return res.success(IfNode(cases, else_case))
+ 
     def atom(self):
         res = parseresult()
         tok = self.current_tok
         if tok.type in (TT_INT, TT_FLOAT):
-            res.register(self.advance())
+            res.register_advancement()
+            self.advance()
             return res.success(number_node(tok))
         elif tok.type == TT_IDENTIFIER:
-            res.register(self.advance())
+            res.register_advancement()
+            self.advance()
             return res.success(varaccess(tok))
         elif tok.type == TT_LPAREN:
-            res.register(self.advance())
+            res.register_advancement()
+            self.advance()
             expr = res.register(self.expr())
             if res.error: return res
             if self.current_tok.type == TT_RPAREN:
-                res.register(self.advance())
+                res.register_advancement()
+                self.advance()
                 return res.success(expr)
             else:
-                return res.failure(invalidsyntax(tok.pos_start, tok.pos_end, "expected ')', got SOMETHING ELSE EW"))
+                return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, "expected ')', got SOMETHING ELSE EW"))
+        elif tok.matches(TT_KEYWORD, 'if'):
+            if_expr = res.register(self.if_expr())
+            if res.error: return res
+            return res.success(if_expr)
+
         return res.failure(invalidsyntax(tok.pos_start, tok.pos_end, "Expected int or float or + or - or ( "))
 
     def power(self):
@@ -383,7 +465,8 @@ class Parser:
         res = parseresult()
         tok = self.current_tok
         if tok.type in (TT_PLUS, TT_MINUS):
-            res.register(self.advance())
+            res.register_advancement()
+            self.advance()
             factor = res.register(self.factor())
             if res.error: return res
             return res.success(unaryoperations(tok, factor))
@@ -399,7 +482,8 @@ class Parser:
         res = parseresult()
         if self.current_tok.matches(TT_KEYWORD, "nuhuh"):
             op_tok= self.current_tok
-            res.register(self.advance())
+            res.register_advancement()
+            self.advance()
             node = res.register(self.comp_expr())
             if res.error: return res
             return res.success(unaryoperations(op_tok, node))
@@ -412,14 +496,17 @@ class Parser:
         res = parseresult()
 
         if self.current_tok.matches(TT_KEYWORD, 'wish'):
-            res.register(self.advance())
+            res.register_advancement()
+            self.advance()
             if self.current_tok.type != TT_IDENTIFIER:
                 return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, "expected identifier"))
             var_name = self.current_tok
-            res.register(self.advance())
+            res.register_advancement()
+            self.advance()
             if self.current_tok.type != TT_EQ:
                 return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, "expected '='"))
-            res.register(self.advance())
+            res.register_advancement()
+            self.advance()
             expr = res.register(self.expr())
             if res.error: return res
             return res.success(varassign(var_name, expr))
@@ -439,7 +526,8 @@ class Parser:
         
         while self.current_tok is not None and (self.current_tok.type in ops or (self.current_tok.type, self.current_tok.value) in ops):
             op = self.current_tok
-            res.register(self.advance())
+            res.register_advancement()
+            self.advance()
             right = res.register(func_b())
             if res.error: return res
             left = bin_op_node(left, op, right)
@@ -519,6 +607,9 @@ class number:
     
     def notted(self):
         return number(1 if self.value==0 else 0).set_context(self.context), None
+
+    def is_true(self):
+        return self.value != 0  # Fixed typo: was 'vlaue'
 
     def __repr__(self):
         return str(self.value)
@@ -625,6 +716,21 @@ class interpreter:
             return res.failure(error)
         else:
             return res.success(result.set_pos(node.pos_start, node.pos_end))
+            
+    def visit_IfNode(self, node, context):
+        res = rtresult()
+        for condition, expr in node.cases:
+            condition_value = res.register(self.visit(condition, context))
+            if res.error: return res
+            if condition_value.is_true():  # Fixed: added parentheses to call the method
+                expr_value = res.register(self.visit(expr, context))
+                if res.error: return res
+                return res.success(expr_value)
+        if node.else_case:
+            else_value = res.register(self.visit(node.else_case, context))
+            if res.error: return res
+            return res.success(else_value)
+        return res.success(number(0))  # Fixed: return number(0) instead of None
 
     def visit_unaryoperations(self, node, context):
         res = rtresult()
@@ -649,8 +755,6 @@ global_symbol_table = symbol_table()
 global_symbol_table.set("null", number(0))
 global_symbol_table.set("true", number(1))
 global_symbol_table.set("false", number(0))
-
-
 
 def run(fn, text):
     # 1) Tokenize
