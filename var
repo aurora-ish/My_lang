@@ -1,0 +1,5 @@
+IDENTIFIER
+KEYWORD
+EQ
+wish          VAR_NAME           =       <EXPR>
+KEYWORD       IDENTIFIER        EQ
