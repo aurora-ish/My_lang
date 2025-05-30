@@ -87,9 +87,6 @@ class lexer:
             elif self.current_char == '^':
                 tokens.append(token(TT_POW, pos_start=self.pos))
                 self.advance()
-            elif self.current_char == '=':
-                tokens.append(token(TT_EQ, pos_start=self.pos))
-                self.advance()
             elif self.current_char in LETTERS:
                 tokens.append(self.make_identifier())
             elif self.current_char in DIGITS:
@@ -100,17 +97,11 @@ class lexer:
                     return [], error
                 tokens.append(tok)
             elif self.current_char == '=':
-                tok, error= self.make_equal()
                 tokens.append(self.make_equal())
             elif self.current_char == '<':
-                tok, error= self.make_equal()
                 tokens.append(self.make_less_than())
             elif self.current_char == '>':
-                tok, error= self.make_equal()
                 tokens.append(self.make_greater_than())
-
-            
-
             else :
                 start = self.pos.copy()
                 char = self.current_char
@@ -123,6 +114,7 @@ class lexer:
         result = ''
         dot = 0
         pos_start = self.pos.copy()
+
 
         while self.current_char is not None and (self.current_char.isdigit() or self.current_char == '.'):
             if self.current_char == '.':
@@ -143,45 +135,42 @@ class lexer:
             self.advance()
         tok_type = TT_KEYWORD if id_str in KEYWORDS else TT_IDENTIFIER
         return token(tok_type, id_str, pos_start, self.pos)
+    
     def make_not_equal(self):
         pos_start = self.pos.copy()
         self.advance()
         if self.current_char == '=':
             self.advance()
-            return token(TT_NE, pos_start, self.pos)
+            return token(TT_NE, pos_start=pos_start, pos_end=self.pos), None
         else:
             return None, ExpectedCharError(pos_start, self.pos, "'='after '!'")
+    
     def make_equal(self):
         tok_type = TT_EQ
         pos_start = self.pos.copy()
         self.advance()
         if self.current_char == '=':
             self.advance()
-            return token(TT_EE, pos_start, self.pos)
-        return token(tok_type, pos_start, self.pos)
+            tok_type = TT_EE
+        return token(tok_type, pos_start=pos_start, pos_end=self.pos)
+    
     def make_less_than(self):
         tok_type = TT_LT
         pos_start = self.pos.copy()
         self.advance()
         if self.current_char == '=':
             self.advance()
-            return token(TT_LTE, pos_start, self.pos)
-        return token(tok_type, pos_start, self.pos)
+            tok_type = TT_LTE
+        return token(tok_type, pos_start=pos_start, pos_end=self.pos)
+    
     def make_greater_than(self):
         tok_type = TT_GT
         pos_start = self.pos.copy()
         self.advance()
         if self.current_char == '=':
             self.advance()
-            return token(TT_GTE, pos_start, self.pos)
-        return token(tok_type, pos_start, self.pos)    
-
-
-        
-
-
-        
-
+            tok_type = TT_GTE
+        return token(tok_type, pos_start=pos_start, pos_end=self.pos)
 
 class position:
     def __init__(self, index, line, column, fn, ftxt):
@@ -213,6 +202,7 @@ class error:
         result += f" File {self.start.fn}, line {self.start.line + 1}"
         result += '\n\n' + string_with_arrows(self.start.ftxt,self.start, self.end )
         return result
+
 class ExpectedCharError(error):
     def __init__(self, pos_start, pos_end, details):
         super().__init__(pos_start, pos_end, "Expected Char", details)
@@ -277,7 +267,8 @@ class number_node:
         
     def __repr__(self):
         return f"{self.tok}"
-        
+
+
 class bin_op_node:
     def __init__(self, left, op, right):
         self.left = left
@@ -289,6 +280,8 @@ class bin_op_node:
     def __repr__(self):
         return f"({self.left}, {self.op}, {self.right})"
     
+
+
 class unaryoperations:
     def __init__(self, op, node):
         self.op = op
@@ -299,6 +292,10 @@ class unaryoperations:
     def __repr__(self):
         return f'({self.op}, {self.node})'
     
+
+
+
+
 class varaccess:
     def __init__(self, var_name_tok):
         self.var_name_tok = var_name_tok
@@ -311,6 +308,9 @@ class varassign:
         self.value = value
         self.pos_start = self.var_name_tok.pos_start
         self.pos_end = self.value.pos_end
+
+
+
 
 ################
 #PARSE RESULT#
@@ -391,6 +391,10 @@ class Parser:
 
     def term(self):
         return self.bin_op(self.factor, (TT_MUL, TT_DIV))
+    
+    def arith_expr(self):
+        return self.bin_op(self.term, (TT_PLUS, TT_MINUS))
+    
     def comp_expr(self):
         res = parseresult()
         if self.current_tok.matches(TT_KEYWORD, "nuhuh"):
@@ -402,8 +406,8 @@ class Parser:
         node = res.register(self.bin_op(self.arith_expr, (TT_EE, TT_NE, TT_LT, TT_GT, TT_LTE, TT_GTE)))
         if res.error: 
             return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, "Expected int , float , +,   - , (, 'nuhuh "))
-      
-
+        return res.success(node)
+    
     def expr(self):
         res = parseresult()
 
@@ -423,7 +427,7 @@ class Parser:
         node = res.register(self.bin_op(self.comp_expr, ((TT_KEYWORD, "alsoo"), (TT_KEYWORD, "or"))))
         if res.error: 
             return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, "expected var or int or float or identifier + - pr ( or )"))
-        return res.success(node)  # FIXED: Return the node with success
+        return res.success(node)
 
     def bin_op(self, func_a, ops, func_b= None):
         if func_b == None:
@@ -433,7 +437,7 @@ class Parser:
         left = res.register(func_a())
         if res.error: return res
         
-        while self.current_tok is not None and self.current_tok.type in ops or (self.current_tok.type, self.current_tok.value)in ops:
+        while self.current_tok is not None and (self.current_tok.type in ops or (self.current_tok.type, self.current_tok.value) in ops):
             op = self.current_tok
             res.register(self.advance())
             right = res.register(func_b())
@@ -480,7 +484,42 @@ class number:
             if other.value == 0:
                 return None, rterror(other.pos_start, other.pos_end,  'Div by 0 error omg thts so stupid', self.context )
             return number(self.value/other.value).set_context(self.context), None
-            
+    
+    def get_comparision_eq(self, other):
+        if isinstance(other, number):
+            return number(int(self.value == other.value)).set_context(self.context), None
+    
+    def get_comparision_ne(self, other):
+        if isinstance(other, number):
+            return number(int(self.value != other.value)).set_context(self.context), None
+    
+    def get_comparision_lt(self, other):
+        if isinstance(other, number):
+            return number(int(self.value < other.value)).set_context(self.context), None
+    
+    def get_comparision_gt(self, other):
+        if isinstance(other, number):
+            return number(int(self.value > other.value)).set_context(self.context), None
+    
+    def get_comparision_lte(self, other):
+        if isinstance(other, number):
+            return number(int(self.value <= other.value)).set_context(self.context), None
+    
+    def get_comparision_gte(self, other):
+        if isinstance(other, number):
+            return number(int(self.value >= other.value)).set_context(self.context), None
+    
+    def anded_by(self, other):
+        if isinstance(other, number):
+            return number(int(self.value and other.value)).set_context(self.context), None
+    
+    def ored_by(self, other):
+        if isinstance(other, number):
+            return number(int(self.value or other.value)).set_context(self.context), None
+    
+    def notted(self):
+        return number(1 if self.value==0 else 0).set_context(self.context), None
+
     def __repr__(self):
         return str(self.value)
 
@@ -536,7 +575,7 @@ class interpreter:
 
         if not value:
             return res.failure(rterror(node.pos_start, node.pos_end, f"unknown wish '{var_name}'", context))
-        # FIXED: Set position and context for the returned value
+        
         value = value.set_pos(node.pos_start, node.pos_end).set_context(context)
         return res.success(value)
 
@@ -565,6 +604,22 @@ class interpreter:
             result, error = left.dived_by(right)
         elif node.op.type == TT_POW:
             result, error = left.powed_by(right)
+        elif node.op.type == TT_EE:
+            result, error = left.get_comparision_eq(right)
+        elif node.op.type == TT_NE:
+            result, error = left.get_comparision_ne(right)
+        elif node.op.type == TT_LT:
+            result, error = left.get_comparision_lt(right)
+        elif node.op.type == TT_GT:
+            result, error = left.get_comparision_gt(right)
+        elif node.op.type == TT_LTE:
+            result, error = left.get_comparision_lte(right) 
+        elif node.op.type == TT_GTE:
+            result, error = left.get_comparision_gte(right)
+        elif node.op.matches(TT_KEYWORD, 'alsoo'):
+            result, error = left.anded_by(right)
+        elif node.op.matches(TT_KEYWORD, 'or'):
+            result, error = left.ored_by(right)
 
         if error:
             return res.failure(error)
@@ -579,6 +634,8 @@ class interpreter:
         error = None
         if node.op.type == TT_MINUS:
             num, error = num.multed_by(number(-1))
+        elif node.op.matches(TT_KEYWORD, 'nuhuh'):
+            num, error = num.notted()
             
         if error:
             return res.failure(error)
@@ -590,6 +647,10 @@ class interpreter:
 #############
 global_symbol_table = symbol_table()
 global_symbol_table.set("null", number(0))
+global_symbol_table.set("true", number(1))
+global_symbol_table.set("false", number(0))
+
+
 
 def run(fn, text):
     # 1) Tokenize
