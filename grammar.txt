@@ -12,8 +12,28 @@ factor :(plus|minus)factor
 
 power: atom(POW factor)*
 
+call:  atom(lparen  (IDENTIFIE(COMMA IDENTIFIER)*)? rparen)?
+
 atom   : int|float|IDENTIFIER
        : lparen expr rparen
+       :if-expr
+       :for-expr
+       :while-expr
+       :func-def
+
+       
+if-xpr : KEYWORD:if expr KEYWORD:then expr 
+       : KEYWORD:elif expr KEYWORD:then expr KEYWORD:else expr
+       :KEYWORD:else expr
+
+for-expr: KEYWORD: for IDENTIFIER EQ expr KEYWORD:to expr
+          (KEYWORD:step expr)? KEYWORD:then expr
+
+while-expr: KEYWORD:while expr KEYWORD:then expr
+
+func-def: KEYWORD fun IDENTIFIER?
+              lparen(IDENTIFIE(COMMA IDENTIFIER)*)? rparen
+              ARROW expr
 
 
 expr() → comp_expr() (assignment) → arith_expr() (addition/subtraction) → term()
