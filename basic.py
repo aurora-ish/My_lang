@@ -337,6 +337,13 @@ class string_node:
     def __repr__(self):
         return f"{self.tok}"
 
+class list_node:
+    def __init__(self, element_nodes, pos_start, pos_end):
+        self.element_nodes = element_nodes
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+
+
 
 class bin_op_node:
     def __init__(self, left, op, right):
@@ -477,6 +484,40 @@ class Parser:
         if not res.error and self.current_tok.type!= TT_EOF:
             return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end,"unexpected we expected something else -_-"))
         return res
+    
+    def list_expr(self):
+        res = parseresult()
+        element_nodes = []
+        pos_start = self.current_tok.pos_start.copy()
+        if self.current_tok.type != TT_LSQUARE:
+            return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end,"expected '['"))
+        res.register_advancement()
+        self.advance()
+
+        if self.current_tok == TT_RSQUARE:
+            res.register_advancement()
+            self.advance()
+        else:
+            element_nodes.append(res.register(self.expr()))
+            if res.error: 
+                return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, "expected var or int or float or identifier + - pr ( or ), if for while [ ] "))
+        
+            while self.current_tok.type == TT_COMMA:
+                res.register_advancement()
+                self.advance()
+                element_nodes.append(res.register(self.expr()))
+                if res.error: return res
+        
+            if self.current_tok.type != TT_RSQUARE:
+                return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, 
+                                            "Expected ')' or comma"))
+            res.register_advancement()
+            self.advance()
+        
+        return res.success(list_node(element_nodes, pos_start, self.current_tok.pos_end.copy()))
+
+                
+            
 
     def if_expr(self):
         res = parseresult()
@@ -793,6 +834,12 @@ class Parser:
                 return res.success(expr)
             else:
                 return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, "expected ')', got SOMETHING ELSE EW"))
+        
+        elif tok.type == TT_LSQUARE:
+            list_expr = res.register(self.list_expr())
+            if res.error: return res
+            return res.success(list_expr)
+
         elif tok.matches(TT_KEYWORD, 'if'):
             if_expr = res.register(self.if_expr())
             if res.error: return res
@@ -1091,6 +1138,60 @@ class string(value):
         return len(self.value) > 0
     
 
+class list(value):
+    def __init__(self, elements):
+        super().__init__()
+        self.elements = elements
+    def added_to(self, other):
+        new_list = self.copy()
+        new_list.elements.append(other)
+        return new_list, None
+    
+    def multed_by(self, other):
+        if isinstance(other, list):
+            new_list = self.copy()
+            new_list.elements.extend(other.elements)
+            return new_list, None
+        else:
+            return None, value.illegal_operation(self, other)
+        
+    def subbed_by(self, other):
+        if isinstance(other, number):
+            new_list = self.copy()
+            try:
+                new_list.elements.pop(other.value)
+                return new_list, None
+            except:
+                return None, rterror(
+                    other.pos_start, other.pos_end, 'element at this index not found', self.context
+                )
+        else:
+            return None, value.illegal_operation(self, other)
+    
+
+    def dived_by(self, other):
+        if isinstance(other, number):
+            try:
+                return self.elements[other.value], None
+            except:
+                return None, rterror(
+                    other.pos_start, other.pos_end, 'element at this index not retrieved', self.context
+                )
+        else:
+            return None, value.illegal_operation(self, other)
+        
+    def copy(self):
+        copy = list(self.elements[:])
+        copy.set_pos(self.pos_start, self.pos_end)
+        copy.set_context(self.context)
+        return copy
+    
+    def __repr__(self):
+        return f'[{", ".join([str(x) for x in self.elements])}]'
+    
+        
+        
+
 class function(value):
     def __init__(self, name, body_node, arg_names):
         super().__init__()
@@ -1186,6 +1287,16 @@ class interpreter:
     def visit_string_node(self, node, context):
         return rtresult().success(string(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end))
 
+    def visit_list_node(self, node, context):
+        res = rtresult()
+        elements = []
+        for element_node in node.element_nodes:
+            elements.append(res.register(self.visit(element_node, context))) 
+            if res.error: return res  
+    
+        return res.success(list(elements).set_context(context).set_pos(node.pos_start, node.pos_end))
+
+
     def visit_varaccess(self, node, context):
         res = rtresult()
         var_name = node.var_name_tok.value
@@ -1262,6 +1373,7 @@ class interpreter:
     
     def visit_forNode(self, node, context):
         res = rtresult()
+        elements = []
         start_value = res.register(self.visit(node.start, context))
         if res.error: return res
         end_value = res.register(self.visit(node.end, context))
@@ -1282,21 +1394,23 @@ class interpreter:
     
         while condition():
             context.symbol_table.set(node.var_name.value, number(i))
-            res.register(self.visit(node.body, context))
+            elements.append(res.register(self.visit(node.body, context)))
+
             if res.error: return res
             i += step_value.value  # Move this AFTER body execution
         
-        return res.success(number(0))
+        return res.success(list(elements).set_context(context).set_pos(node.pos_start, node.pos_end))
     def visit_whileNode(self, node, context):
         res = rtresult()
+        elements = []
         while True:
             condition = res.register(self.visit(node.condition, context))
             if res.error: return res
             if not condition.is_true():
                 break
-            res.register(self.visit(node.body, context))
+            elements.append(res.register(self.visit(node.body, context)))
             if res.error: return res
-        return res.success(number(0))  
+        return res.success(list(elements).set_context(context).set_pos(node.pos_start, node.pos_end))  
 
     def visit_unaryoperations(self, node, context):
         res = rtresult()
