@@ -12,14 +12,17 @@ factor :(plus|minus)factor
 
 power: atom(POW factor)*
 
-call:  atom(lparen  (IDENTIFIE(COMMA IDENTIFIER)*)? rparen)?
+call:  atom(lparen  (expr(COMMA expr)*)? rparen)?
 
-atom   : int|float|IDENTIFIER
+atom   : int|float|IDENTIFIER|STRING
        : lparen expr rparen
+       : list-expr
        :if-expr
        :for-expr
        :while-expr
        :func-def
+
+list-expr: LSQUARE | RSQAURE
 
        
 if-xpr : KEYWORD:if expr KEYWORD:then expr 
@@ -37,5 +40,6 @@ func-def: KEYWORD fun IDENTIFIER?
 
 
 expr() → comp_expr() (assignment) → arith_expr() (addition/subtraction) → term()
+
 
 
