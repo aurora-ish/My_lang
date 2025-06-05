@@ -6,6 +6,7 @@ LETTERS_DIGITS = LETTERS+ DIGITS
 
 TT_INT = 'INT'
 TT_FLOAT = 'FLOAT'
+TT_STRING = 'STRING'
 TT_IDENTIFIER = 'IDENTIFIER'
 TT_KEYWORD = 'KEYWORD'
 TT_EQ = 'EQ'
@@ -15,6 +16,8 @@ TT_MUL = 'MUL'
 TT_DIV = 'DIV'
 TT_LPAREN = 'LPAREN'
 TT_RPAREN = 'RPAREN'
+TT_LSQUARE = 'LSQUARE'
+TT_RSQUARE = 'RSQUARE'
 TT_EE = 'EE'
 TT_NE = 'NE'
 TT_LT = 'LT'
@@ -87,6 +90,12 @@ class lexer:
             elif self.current_char == ')':
                 tokens.append(token(TT_RPAREN, pos_start=self.pos))
                 self.advance()
+            elif self.current_char == '[':
+                tokens.append(token(TT_LSQUARE, pos_start=self.pos))
+                self.advance()
+            elif self.current_char == ']':
+                tokens.append(token(TT_RSQUARE, pos_start=self.pos))
+                self.advance()
             elif self.current_char == '^':
                 tokens.append(token(TT_POW, pos_start=self.pos))
                 self.advance()
@@ -94,6 +103,9 @@ class lexer:
                 tokens.append(self.make_identifier())
             elif self.current_char in DIGITS:
                 tokens.append(self.make_number())
+            elif self.current_char == '"':
+                tokens.append(self.make_string())
+
             elif self.current_char == '!':
                 tok, error= self.make_not_equal()
                 if error:
@@ -132,6 +144,33 @@ class lexer:
             return token(TT_INT, int(result), pos_start, self.pos)
         else:
             return token(TT_FLOAT, float(result), pos_start, self.pos)
+    
+    def make_string(self):
+        string = ''
+        pos_start = self.pos.copy()  #  use self.pos not self.pos_start
+        escape_char = False
+        self.advance()
+
+        escape_chars = { 
+        'n': '\n',
+        't': '\t',
+    }
+
+        while self.current_char != '"' and self.current_char != None:
+            if escape_char:
+                string += escape_chars.get(self.current_char, self.current_char)  # ✅ Fix 2: use dict.get()
+                escape_char = False
+            else:
+                if self.current_char == '\\':
+                    escape_char = True
+                else:
+                    string += self.current_char
+            self.advance()
+    
+        self.advance()  # Skip closing quote
+        return token(TT_STRING, string, pos_start, self.pos)
+    
+
 
     def make_identifier(self):
         id_str = ''
@@ -185,6 +224,7 @@ class lexer:
             self.advance()
             tok_type = TT_ARROW
         return token(tok_type, pos_start=pos_start, pos_end=self.pos)
+    
 
 class position:
     def __init__(self, index, line, column, fn, ftxt):
@@ -249,6 +289,11 @@ class rterror(error):
             pos = ctx.parent_entry_pos
             ctx = ctx.parent
         return result
+'''
+kriti
+pandey
+'''
+
 
 ####################
 #runtime result
@@ -282,6 +327,16 @@ class number_node:
         
     def __repr__(self):
         return f"{self.tok}"
+
+class string_node:
+    def __init__(self, tok):
+        self.tok = tok
+        self.pos_start = self.tok.pos_start
+        self.pos_end = self.tok.pos_end
+        
+    def __repr__(self):
+        return f"{self.tok}"
+
 
 class bin_op_node:
     def __init__(self, left, op, right):
@@ -719,6 +774,10 @@ class Parser:
             res.register_advancement()
             self.advance()
             return res.success(number_node(tok))
+        elif tok.type in TT_STRING:
+            res.register_advancement()
+            self.advance()
+            return res.success(string_node(tok))
         elif tok.type == TT_IDENTIFIER:
             res.register_advancement()
             self.advance()
@@ -787,24 +846,29 @@ class Parser:
             return res.success(unaryoperations(op_tok, node))
         node = res.register(self.bin_op(self.arith_expr, (TT_EE, TT_NE, TT_LT, TT_GT, TT_LTE, TT_GTE)))
         if res.error: 
-            return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, "Expected int , float , +,   - , (, 'nuhuh "))
+            return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, "Expected int , float , +,   - , '(', 'nuhuh "))
         return res.success(node)
     
     def expr(self):
+        
         res = parseresult()
 
         if self.current_tok.matches(TT_KEYWORD, 'wish'):
             res.register_advancement()
             self.advance()
+
             if self.current_tok.type != TT_IDENTIFIER:
                 return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, "expected identifier"))
             var_name = self.current_tok
+
             res.register_advancement()
             self.advance()
+
             if self.current_tok.type != TT_EQ:
                 return res.failure(invalidsyntax(self.current_tok.pos_start, self.current_tok.pos_end, "expected '='"))
             res.register_advancement()
             self.advance()
+
             expr = res.register(self.expr())
             if res.error: return res
             return res.success(varassign(var_name, expr))
@@ -818,7 +882,7 @@ class Parser:
         if func_b == None:
             func_b = func_a
         res = parseresult()
-
+    
         left = res.register(func_a())
         if res.error: return res
         
@@ -856,10 +920,13 @@ class value:
     
     def multed_by(self, other):
         return None, self.illegal_operation(other)
+    
     def divd_by(self, other):
         return None, self.illegal_operation(other)
+    
     def powed_by(self, other):
         return None, self.illegal_operation(other)
+    
     def get_comparision_eq(self, other):
         return None, self.illegal_operation(other)
     
@@ -868,22 +935,31 @@ class value:
     
     def get_comparision_lt(self, other):
         return None, self.illegal_operation(other)
+    
     def get_comparision_gt(self, other):
         return None, self.illegal_operation(other)
+    
     def get_comparision_lte(self, other):
         return None, self.illegal_operation(other)
+    
     def get_comparision_gte(self, other):
         return None, self.illegal_operation(other)
+    
     def anded_by(self, other):
         return None, self.illegal_operation(other)
+    
     def ored_by(self, other):
         return None, self.illegal_operation(other)
+    
     def notted(self):
         return None, self.illegal_operation()
+    
     def is_true(self):
         return False
+    
     def copy(self):
         raise Exception('no copy method defined')
+    
     def execute(self, args):
         return None, self.illegal_operation()
     
@@ -894,6 +970,14 @@ class value:
 			'Illegal operation',
 			self.context
 		)
+    def copy(self):
+        string_copy = string(self.value) 
+        string_copy.set_context(self.context)
+        string_copy.set_pos(self.pos_start, self.pos_end)
+        return string_copy
+    
+    def __repr__(self):
+        return f'"{self.value}"'
     
 
 class number(value):
@@ -921,14 +1005,18 @@ class number(value):
         if isinstance(other, number):
             return number(self.value-other.value).set_context(self.context), None
         else: return None, value.illegal_operation(self.pos_start, self.pos_end)   
+
     def multed_by(self, other):
         if isinstance(other, number):
             return number(self.value*other.value).set_context(self.context), None
-        else: return None, value.illegal_operation(self.pos_start, self.pos_end)    
+        else: return None, value.illegal_operation(self.pos_start, self.pos_end)   
+
+
     def powed_by(self, other):
         if isinstance(other, number):
             return number(self.value**other.value).set_context(self.context), None
         else: return None, value.illegal_operation(self.pos_start, self.pos_end)    
+
     def dived_by(self, other):
         if isinstance(other, number):
             if other.value == 0:
@@ -945,6 +1033,7 @@ class number(value):
         if isinstance(other, number):
             return number(int(self.value != other.value)).set_context(self.context), None
         else: return None, value.illegal_operation(self.pos_start, self.pos_end)
+
     def get_comparision_lt(self, other):
         if isinstance(other, number):
             return number(int(self.value < other.value)).set_context(self.context), None
@@ -957,18 +1046,22 @@ class number(value):
         if isinstance(other, number):
             return number(int(self.value <= other.value)).set_context(self.context), None
         else: return None, value.illegal_operation(self.pos_start, self.pos_end)
+
     def get_comparision_gte(self, other):
         if isinstance(other, number):
             return number(int(self.value >= other.value)).set_context(self.context), None
         else: return None, value.illegal_operation(self.pos_start, self.pos_end)
+
     def anded_by(self, other):
         if isinstance(other, number):
             return number(int(self.value and other.value)).set_context(self.context), None
         else: return None, value.illegal_operation(self.pos_start, self.pos_end)
+
     def ored_by(self, other):
         if isinstance(other, number):
             return number(int(self.value or other.value)).set_context(self.context), None
         else: return None, value.illegal_operation(self.pos_start, self.pos_end)
+
     def notted(self):
         return number(1 if self.value==0 else 0).set_context(self.context), None
 
@@ -977,7 +1070,27 @@ class number(value):
 
     def __repr__(self):
         return str(self.value)
+
+class string(value):
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+
+    def added_to(self, other):
+        if isinstance(other, string):
+            return string(self.value + other.value).set_context(self.context), None
+        else:
+            return None, value.illegal_operation(self, other)
+        
+    def multed_by(self, other):
+        if isinstance(other, number):
+            return string(self.value * other.value).set_context(self.context), None
+        else:
+            return None, value.illegal_operation(self, other)
+    def is_true(self):
+        return len(self.value) > 0
     
+
 class function(value):
     def __init__(self, name, body_node, arg_names):
         super().__init__()
@@ -997,12 +1110,14 @@ class function(value):
 				f"{len(args) - len(self.arg_names)} too many args passed into '{self.name}'",
 				self.context
 			))
+        
         if len(args) < len(self.arg_names):
             return res.failure(rterror(
 				self.pos_start, self.pos_end,
 				f"{len(self.arg_names) - len(args)} too few args passed into '{self.name}'",
 				self.context
 			))
+        
         for i in range(len(args)):
             arg_name = self.arg_names[i]
             arg_value = args[i]
@@ -1012,16 +1127,15 @@ class function(value):
         value = res.register(inter.visit(self.body_node, new_context))
         if res.error: return res
         return res.success(value)
+    
     def copy(self):
         copy = function(self.name, self.body_node, self.arg_names)
         copy.set_context(self.context)
         copy.set_pos(self.pos_start, self.pos_end)
         return copy
     def __repr__(self):
-        return f"<function {self.name}"
-    
-            
-        
+        return f"<function {self.name}>"
+
 
 
 #################
@@ -1068,7 +1182,10 @@ class interpreter:
 
     def visit_number_node(self, node, context):
         return rtresult().success(number(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end))
-                                  
+
+    def visit_string_node(self, node, context):
+        return rtresult().success(string(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end))
+
     def visit_varaccess(self, node, context):
         res = rtresult()
         var_name = node.var_name_tok.value
@@ -1136,11 +1253,13 @@ class interpreter:
                 expr_value = res.register(self.visit(expr, context))
                 if res.error: return res
                 return res.success(expr_value)
+            
         if node.else_case:
             else_value = res.register(self.visit(node.else_case, context))
             if res.error: return res
             return res.success(else_value)
         return res.success(number(0))  # Fixed: return number(0) instead of None
+    
     def visit_forNode(self, node, context):
         res = rtresult()
         start_value = res.register(self.visit(node.start, context))
@@ -1224,15 +1343,10 @@ class interpreter:
         return res.success(return_value)
     
 
-
-
-
-
-
-
 #############
 ###RUN#######
 #############
+
 global_symbol_table = symbol_table()
 global_symbol_table.set("null", number(0))
 global_symbol_table.set("true", number(1))
