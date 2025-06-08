@@ -1,5 +1,6 @@
 from string_with_arrows import *
 import string
+import os
 DIGITS = '0123456789'
 LETTERS = string.ascii_letters
 LETTERS_DIGITS = LETTERS+ DIGITS
@@ -302,6 +303,8 @@ class rtresult:
     def __init__(self):
         self.value = None
         self.error = None
+    def should_return(self):
+        return self.error is not None
     
     def register(self, res):
         if res and res.error: 
@@ -1117,6 +1120,11 @@ class number(value):
 
     def __repr__(self):
         return str(self.value)
+number.null = number(0)
+number.false = number(0)
+number.true = number(1)
+
+
 
 class string(value):
     def __init__(self, value):
@@ -1181,7 +1189,7 @@ class list(value):
             return None, value.illegal_operation(self, other)
         
     def copy(self):
-        copy = list(self.elements[:])
+        copy = list(self.elements)
         copy.set_pos(self.pos_start, self.pos_end)
         copy.set_context(self.context)
         return copy
@@ -1190,42 +1198,79 @@ class list(value):
         return f'[{", ".join([str(x) for x in self.elements])}]'
     
         
+class basefunction(value):
+    def __init__(self, name):
+        super().__init__() 
+        self.name = name
+    
+    def generate_new_context(self):
+        new_context = context(self.name, self.context, self.pos_start)
+        new_context.symbol_table = symbol_table(new_context.parent.symbol_table)
+        return new_context
+    
+    def execute(self, args, inter):  # Make base class accept inter
+        res = rtresult()
+        exec_ctx = self.generate_new_context()
+        method_name = f'execute_{self.name}'
+        method = getattr(self, method_name, self.no_visit_method)
+        res.register(self.check_and_populate_args(method.arg_names, args, exec_ctx))
+        if res.error: return res
+        return_value = res.register(method(exec_ctx))
+        if res.error: return res
+        return res.success(return_value)
+    
+    def check_args(self, arg_names, args):
+        res = rtresult()
+        if len(args) > len(arg_names):
+            return res.failure(rterror(
+				self.pos_start, self.pos_end,
+				f"{len(args) - len(arg_names)} too many args passed into '{self}'",
+				self.context
+			))
         
+        if len(args) < len(arg_names):
+            return res.failure(rterror(
+				self.pos_start, self.pos_end,
+				f"{len(arg_names) - len(args)} too few args passed into '{self}'",
+				self.context
+			))
+        return res.success(None)
+    
+    def populate_args(self, arg_names, args, exec_ctx):
+        for i in range(len(args)):
+            arg_name = arg_names[i]
+            arg_value = args[i]
+            arg_value.set_context(exec_ctx)
+            exec_ctx.symbol_table.set(arg_name, arg_value)
 
-class function(value):
+    def check_and_populate_args(self, arg_names, args, exec_ctx):
+        res = rtresult()
+        res.success(self.check_args(arg_names, args))
+        if res.should_return(): return res
+        self.populate_args(arg_names, args, exec_ctx)
+        return res.success(None)
+    
+
+    
+
+class function(basefunction):
     def __init__(self, name, body_node, arg_names):
-        super().__init__()
-        self.name = name or "<anonymous>"
+        super().__init__(name)
+        
         self.body_node = body_node
         self.arg_names = arg_names
 
-    def execute(self, args):
+    def execute(self, args, inter):
         res = rtresult()
-        inter = interpreter()
-        new_context = context(self.name, self.context, self.pos_start)
-        new_context.symbol_table = symbol_table(new_context.parent.symbol_table)
-
-        if len(args) > len(self.arg_names):
-            return res.failure(rterror(
-				self.pos_start, self.pos_end,
-				f"{len(args) - len(self.arg_names)} too many args passed into '{self.name}'",
-				self.context
-			))
+        exec_ctx = self.generate_new_context()
         
-        if len(args) < len(self.arg_names):
-            return res.failure(rterror(
-				self.pos_start, self.pos_end,
-				f"{len(self.arg_names) - len(args)} too few args passed into '{self.name}'",
-				self.context
-			))
+        # Inherit global symbols by setting parent symbol table
+        exec_ctx.symbol_table = symbol_table(self.context.symbol_table)
         
-        for i in range(len(args)):
-            arg_name = self.arg_names[i]
-            arg_value = args[i]
-            arg_value.set_context(new_context)
-            new_context.symbol_table.set(arg_name, arg_value)
+        res.register(self.check_and_populate_args(self.arg_names, args, exec_ctx))
+        if res.error: return res
         
-        value = res.register(inter.visit(self.body_node, new_context))
+        value = res.register(inter.visit(self.body_node, exec_ctx))
         if res.error: return res
         return res.success(value)
     
@@ -1236,7 +1281,148 @@ class function(value):
         return copy
     def __repr__(self):
         return f"<function {self.name}>"
+    
+class builtinfunction(basefunction):
+    def __init__(self, name):
+        super().__init__(name)
 
+    def execute(self, args, inter):  # Now accepts inter parameter
+        res = rtresult()
+        exec_ctx = self.generate_new_context()
+        method_name = f'execute_{self.name}'
+        method = getattr(self, method_name, self.no_visit_method)
+        res.register(self.check_and_populate_args(method.arg_names, args, exec_ctx))
+        if res.error: return res
+        return_value = res.register(method(exec_ctx))
+        if res.error: return res
+        return res.success(return_value)
+
+    def no_visit_method(self, node, context):
+        raise Exception(f'No execure_{self.name} method defined')
+    
+    def copy(self):
+        copy = builtinfunction(self.name)
+        copy.set_context(self.context)
+        copy.set_pos(self.pos_start, self.pos_end)
+        return copy
+    
+    def __repr__(self):
+        return f"<built-in function {self.name}>"
+    
+    #########################
+
+    def execute_print(self, exec_ctx):
+        print(str(exec_ctx.symbol_table.get('value')))
+        return rtresult().success(number.null)
+    execute_print.arg_names = ['value']
+
+    def execute_print_ret(self, exec_ctx):
+        return rtresult().success(string(str(exec_ctx.symbol_table.get('value'))))
+
+    def execute_input(self, exec_ctx):
+        text = input()
+        return rtresult().success(string(text))
+    execute_input.arg_names = []
+    
+    def execute_input_int(self, exec_ctx):
+        text = input()
+        while True:
+            try:
+                number = int(text)
+                break
+            except ValueError:
+                print(f"'you must cast an integer -_-")
+            return rtresult().success(string(text))
+    execute_input.arg_names = []
+
+    def execute_clear(self, exec_ctx):
+        os.system('cls' if os.name == 'nt' else 'clear')
+        return rtresult().success(number.null)
+    execute_clear.arg_names = []
+
+    def execute_is_number(self, exec_ctx):
+        is_number = isinstance(exec_ctx.symbol_table.get('value'), number)
+        return rtresult().success(number.true if is_number else number.false)
+    execute_is_number.arg_names = ['value']
+
+    def execute_is_string(self, exec_ctx):
+        is_number = isinstance(exec_ctx.symbol_table.get('value'), string)
+        return rtresult().success(number.true if is_number else number.false)
+    execute_is_string.arg_names = ['value']
+
+    def execute_is_list(self, exec_ctx):
+        is_number = isinstance(exec_ctx.symbol_table.get('value'), list)
+        return rtresult().success(number.true if is_number else number.false)
+    execute_is_list.arg_names = ['value']
+
+    def execute_is_function(self, exec_ctx):
+        is_number = isinstance(exec_ctx.symbol_table.get('value'), basefunction)
+        return rtresult().success(number.true if is_number else number.false)
+    execute_is_function.arg_names = ['value']
+
+    def execute_append(self, exec_ctx):
+        list_ = exec_ctx.symbol_table.get('list')
+        value = exec_ctx.symbol_table.get('value')
+        if not isinstance(list_, list):
+            return rtresult().failure(rterror(self.pos_start, self.pos_end, "first argument shud be list bonks", exec_ctx))
+        list_.elements.append(value)
+        return rtresult().success(number.null)
+    execute_append.arg_names = ['list', 'value']
+
+    def execute_pop(self, exec_ctx):
+        list_ = exec_ctx.symbol_table.get('list')
+        index = exec_ctx.symbol_table.get('index')
+        if not isinstance(list_, list):
+            return rtresult().failure(rterror(self.pos_start, self.pos_end, "first argument shud be list bonks", exec_ctx))
+        if not isinstance(index, number):
+            return rtresult().failure(rterror(self.pos_start, self.pos_end, "second argument shud be number bonks", exec_ctx))
+        try:
+            element = list_.elements.pop(index.value)
+        except:
+            return rtresult().failure(rterror(self.pos_start, self.pos_end, "index out of range bonks", exec_ctx))
+        return rtresult().success(element)
+    execute_pop.arg_names = ['list', 'index']
+
+    def execute_pop(self, exec_ctx):
+        list_ = exec_ctx.symbol_table.get('list')
+        index = exec_ctx.symbol_table.get('index')
+        if not isinstance(list_, list):
+            return rtresult().failure(rterror(self.pos_start, self.pos_end, "first argument shud be list bonks", exec_ctx))
+        if not isinstance(index, number):
+            return rtresult().failure(rterror(self.pos_start, self.pos_end, "second argument shud be number bonks", exec_ctx))
+        try: 
+            element = list_.elements.pop(index.value)
+        except:
+            return rtresult().failure(rterror(self.pos_start, self.pos_end, "index out of range bonks", exec_ctx))
+        return rtresult().success(element)
+    execute_pop.arg_names = ['list', 'index']
+
+    def execute_extends(self, exec_ctx):
+        lista = exec_ctx.symbol_table.get('lista')
+        listb = exec_ctx.symbol_table.get('listb')
+        if not isinstance(lista, list):
+            return rtresult().failure(rterror(self.pos_start, self.pos_end, "first argument shud be list bonks", exec_ctx))
+        if not isinstance(listb, list):
+            return rtresult().failure(rterror(self.pos_start, self.pos_end, "second argument shud be list bonks", exec_ctx))
+        lista.elements.extend(listb.elements)
+        return rtresult().success(number.null)
+    execute_extends.arg_names = ['lista', 'listb']
+
+builtinfunction.print = builtinfunction("yap")
+builtinfunction.print_ret = builtinfunction("yap_ret")
+builtinfunction.input = builtinfunction("listening")
+builtinfunction.input_int = builtinfunction("listening_num")
+builtinfunction.clear = builtinfunction("wipe")
+builtinfunction.is_number = builtinfunction("isnum")
+builtinfunction.is_string = builtinfunction("isstr")
+builtinfunction.is_list = builtinfunction("islist")
+builtinfunction.is_function = builtinfunction("isfunc")
+builtinfunction.append = builtinfunction("addtail")
+builtinfunction.pop = builtinfunction("pop")
+builtinfunction.extend = builtinfunction("growtail")
+
+
+    
 
 
 #################
@@ -1255,7 +1441,7 @@ class context:
 class symbol_table:
     def __init__(self, parent = None):
         self.symbols = {}
-        self.parent = None
+        self.parent = parent
         
     def get(self, name):
         value = self.symbols.get(name, None)
@@ -1452,8 +1638,9 @@ class interpreter:
             args.append(res.register(self.visit(arg_node, context)))
             if res.error: return res
 
-        return_value = res.register(value_to_call.execute(args))
+        return_value = res.register(value_to_call.execute(args, self))
         if res.error: return res
+        return_value = return_value.copy().set_pos(node.pos_start, node.pos_end).set_context(context)
         return res.success(return_value)
     
 
@@ -1461,10 +1648,27 @@ class interpreter:
 ###RUN#######
 #############
 
+# Replace your current global symbol table setup with:
 global_symbol_table = symbol_table()
-global_symbol_table.set("null", number(0))
-global_symbol_table.set("true", number(1))
-global_symbol_table.set("false", number(0))
+global_symbol_table.set("null", number.null)
+global_symbol_table.set("true", number.true)
+global_symbol_table.set("false", number.false)
+global_symbol_table.set("yap", builtinfunction("print"))  # Changed this line
+global_symbol_table.set("yap_ret", builtinfunction("print_ret"))
+global_symbol_table.set("listening", builtinfunction("input"))
+global_symbol_table.set("listening_num", builtinfunction("input_int"))
+global_symbol_table.set("wipe", builtinfunction("clear"))
+global_symbol_table.set("isnum", builtinfunction("is_number"))
+global_symbol_table.set("isstr", builtinfunction("is_string"))
+global_symbol_table.set("islist", builtinfunction("is_list"))
+global_symbol_table.set("isfunc", builtinfunction("is_function"))
+global_symbol_table.set("addtail", builtinfunction("append"))
+global_symbol_table.set("pop", builtinfunction("pop"))
+global_symbol_table.set("growtail", builtinfunction("extend"))
+
+
+
+
 
 def run(fn, text):
     # 1) tokenize
