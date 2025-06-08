@@ -1,0 +1,13 @@
+LIST OF FUNCTION INCLUDED:
+print = yap
+print_ret = yap_ret
+input = listening
+input_int = listening_num
+clear = wipe
+is_number = isnum
+is_list = islist
+is_string = isstr
+is_function = isfunc
+append = addtail
+pop = pop
+extend = growtail
